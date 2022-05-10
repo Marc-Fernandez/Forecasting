@@ -1,0 +1,149 @@
+
+ clean up and load libraries
+```{r}
+rm( list=ls() )
+library(sandwich)
+library(lmtest)
+source('../lib/utilities.R')
+```
+
+ import data
+```{r}
+D <- read.table('../data/macro-dataset.csv',header=TRUE)
+dates <- as.Date(D$dates,'%Y-%m-%d')
+T     <- length(D$dates)
+```
+
+ Plot levels of the series (series appear to be nonstationary)
+```{r}
+
+par(mfrow=c(2,2))
+myplot(dates,D$indpro)
+myplot(dates,D$sp500)
+myplot(dates,D$house)
+myplot(dates,D$sent)
+```
+
+ Construct growth rate and plot it
+```{r}
+
+dip    <- diff(log(D$indpro))*100
+dsp500 <- diff(log(D$sp500))*100
+dhouse <- diff(log(D$house))*100
+dsent  <- diff(log(D$sent))*100
+dates  <- dates[2:T]
+T      <- T-1
+
+
+par(mfrow=c(2,2))
+myplot(dates,dip)
+myplot(dates,dsp500)
+myplot(dates,dhouse)
+myplot(dates,dsent)
+
+```
+
+ Autocorrelation analysis
+```{R}
+
+par(mfrow=c(2,2),mar=c(2,2,0.1,0.1))
+acf(dip , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2',main='')
+acf(dsp500 , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2',main='')
+acf(dhouse , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2',main='')
+acf(dsent , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2',main='')
+
+```
+
+ Run regression and report estimation results with and without robust std-err
+```{r}
+data  <- data.frame( y=dip[2:T] , dip=dip[1:(T-1)] , dhouse=dhouse[1:(T-1)] ,  dsp500=dsp500[1:(T-1)] , dsent=dsent[1:(T-1)] )
+
+pred.reg <- lm( y ~ dip + dsp500 + dhouse +  dsent , data=data )
+
+vc.nw <- NeweyWest(pred.reg)
+
+coeftest(pred.reg)
+coeftest(pred.reg,vc.nw)
+```
+
+ Residuals analysis
+```{r}
+eps <- pred.reg$resid
+
+
+par(mfrow=c(1,1))
+acf(eps, lwd=5 , xlim=c(0,25) , col='darkorange2',main='')
+
+
+Box.test( eps  , lag=12 )
+```
+
+ Dynamic multiplier
+```{r}
+H    <- 6
+mf   <- rep(0,H)
+mf.c <- matrix(0,H,2)
+
+for( h in 1:H ){
+  data.h  <- data.frame( y=dip[(1+h):T] , dip=dip[1:(T-h)] , dhouse=dhouse[1:(T-h)] ,  dsp500=dsp500[1:(T-h)] , dsent=dsent[1:(T-h)] )
+
+  pred.reg.h <- lm( y ~ dip + dsp500 + dhouse +  dsent , data=data.h )
+
+  vc.nw.h <- NeweyWest(pred.reg.h)
+
+  ct.h <- coeftest(pred.reg.h,vc.nw.h)
+  
+  mf[h]    <- ct.h['dsp500','Estimate']
+  mf.c[h,] <- mf[h] + ct.h['dsp500','Std. Error']*c(-1,1)*qnorm(0.05)
+}
+
+
+par(mar=c(2,2,0.1,0.1))
+plot(mf,t='b',lwd=3,col='darkred',ylim=c(-0.025,0.10),xaxs='i',tck=0.02,pch=19)
+lines(mf.c[,1],lwd=1,col='darkred',pch=25,t='b')
+lines(mf.c[,2],lwd=1,col='darkred',pch=24,t='b')
+grid()
+box()
+abline(h=0,lwd=4)
+
+```
+
+ Forecasting
+```{r}
+is <- dates[2:T] < as.Date('2008-01-01') 
+os <- dates[2:T] >= as.Date('2008-01-01') 
+
+data.is <- data[is,]
+data.os <- data[os,]
+
+dates.os <- (dates[2:T])[os]
+y.is     <- data[is,'y']
+y.os     <- data[os,'y']
+
+pred.reg.is <- lm( y ~ dip + dsp500 + dhouse + dsent , data=data.is )
+y.hat       <- predict( pred.reg.is , newdata=data.os )
+
+y.bench  <- rep( mean(y.is) , sum(os) )
+
+e.0      <- y.os - y.bench
+e.1      <- y.os - y.hat 
+
+mse.0 <- mean( e.0**2 )
+mse.1 <- mean( e.1**2 )
+
+R2.0  <- 1 - mse.0/var(y.os)
+R2.1  <- 1 - mse.1/var(y.os)
+
+# 
+
+myplot( dates.os , y.os , col='black' )
+lines( dates.os , y.bench , lwd=2 , col='blue')
+lines( dates.os , y.hat   , lwd=2 , col='red')
+
+
+#
+
+myplot( dates.os , cumsum( e.0**2 )/sum( e.0**2 ) * 100 , lwd=2 , col='blue' , ylim=c(0,100))
+lines( dates.os , cumsum( e.1**2 )/sum( e.0**2 ) * 100 , lwd=2 , col='red')
+
+```

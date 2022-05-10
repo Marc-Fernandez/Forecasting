@@ -1,0 +1,161 @@
+
+```{r}
+rm( list=ls() )
+
+library(fGarch)
+library(tseries)
+library(moments)
+
+source('../lib/utilities.R')
+source('../lib/tarch.R')
+```
+
+```{r}
+D <- read.table('../data/sp500-returns.csv');
+
+dates <- as.Date(as.character(D[,1]),'%Y-%m-%d')
+ret   <- D[,2]
+ret[ abs(ret) > 200 ] <- 0 # remove erroneous returns of both signs
+```
+
+ TARCH
+```{r}
+tarch11.n   <- Tgarch11(ret)
+tarch11.st  <- Tgarch11(ret,cond.dist='std')
+
+print( round( cbind( c(tarch11.n$par,0) , tarch11.st$par ) , 3 ) )
+
+sigma.n  <- tarch11.n$volatility
+sigma.st <- tarch11.st$volatility
+
+z.n   <- ret/sigma.n
+z.st  <- ret/sigma.st
+
+par( mar=c(2,2,0.1,0.1) )
+qqnorm(z.n,col='tomato',main='')
+qqline(z.n,lwd=2,lty=3)
+
+par( mar=c(2,2,0.1,0.1) )
+qqplot(rstd(10000,nu=tarch11.st$par['shape']),z.st,col='tomato',main='')
+qqline(z.st,lwd=2,lty=3)
+
+gof.n  <- ks.test( z.n , rnorm(10000,0,1) )
+gof.st <- ks.test( z.st , rstd(10000,nu=tarch11.st$par['shape']) ) # JC: same comment as above
+```
+
+ residual analysis
+```{r}
+u.n  = pnorm( z.n );
+u.st = pstd( z.st , nu=tarch11.st$par['shape'] )
+
+par( tck=0.02 , xaxs='i' , yaxs='i' )
+h.n <- hist( u.n , col='red' , freq=FALSE , ylim=c(0,1.25) )
+
+par( tck=0.02 , xaxs='i' , yaxs='i' )
+h.st <- hist( u.st , col='red' , freq=FALSE , ylim=c(0,1.25))
+```
+
+ kernel
+```{r}
+kernel <- density(z.n)
+kernel
+
+par( mar=c(2,2,0.1,0.1) )
+plot( kernel , main='' , yaxs='i' )
+polygon( kernel , col="tomato" , border='darkred' )
+lines( seq(-10,10,0.1) , dnorm( seq(-10,10,0.1) , mean(z.n) , sd(z.n) ) , col='darkblue' ,lwd=4)  
+```
+
+ Out Of Sample VaR Forecasting
+```{r}
+p  <- 0.05
+is <- dates < as.Date('2010-01-01')
+os <- dates >= as.Date('2010-01-01')
+
+tarch11.n   <- Tgarch11(ret[is])
+tarch11.st  <- Tgarch11(ret[is],cond.dist='std')
+
+sigma.n  <- tarch11.n$volatility
+sigma.st <- tarch11.st$volatility
+
+theta.n  <- tarch11.n$par
+theta.st <- tarch11.st$par
+
+sig2.n   <- sigma.n[sum(is)]**2
+sig2.st  <- sigma.st[sum(is)]**2
+
+z.n      <- ret[is]/sigma.n
+z.st      <- ret[is]/sigma.st  
+
+VaR.hs <- rep( 0 , sum( os ) )
+VaR.n  <- rep( 0 , sum( os ) )
+VaR.st <- rep( 0 , sum( os ) )
+VaR.np <- rep( 0 , sum( os ) ) 
+
+for( t in (sum(is)+1):length(ret) ){
+    
+  sig2.n <-theta.n['omega'] + theta.n['alpha']*ret[t-1]**2 + theta.n['gam1']*ret[t-1]**2 * (ret[t-1]<0) + theta.n['beta']*sig2.n
+  sig2.st <-theta.st['omega'] + theta.st['alpha']*ret[t-1]**2 + theta.st['gam1']*ret[t-1]**2 * (ret[t-1]<0) + theta.st['beta']*sig2.st
+  
+  #
+  VaR.hs[ t - sum(is) ] <- -quantile( ret[(t-501):t-1] , p )
+  VaR.n[ t - sum(is) ]  <- -sqrt( sig2.n ) * qnorm(p)
+  VaR.st[ t - sum(is) ] <- -sqrt( sig2.st ) * qstd(p,nu=theta.st['shape']) # J
+  VaR.np[ t - sum(is) ] <- -sqrt( sig2.n ) * quantile( z.n , p )
+}
+
+dates.os <- dates[os]
+ret.os   <- ret[os]
+ 
+h.hs <- ret.os < -VaR.hs
+h.n  <- ret.os < -VaR.n
+h.st <- ret.os < -VaR.st
+h.np <- ret.os < -VaR.np
+
+myplot( dates.os , -VaR.hs , ylim=c(-6,0) )
+points( dates.os[h.hs] , ret.os[h.hs] , pch=4 , lwd=2 )
+
+myplot( dates.os , -VaR.n , ylim=c(-6,0) , col='red2')
+points( dates.os[h.n] , ret.os[h.n] , pch=4 , lwd=2 )
+
+myplot( dates.os , -VaR.st , ylim=c(-6,0) , col='green2' )
+points( dates.os[h.st] , ret.os[h.st] , pch=4 , lwd=2 )
+
+myplot( dates.os , -VaR.np , ylim=c(-6,0) , col='purple' )
+points( dates.os[h.np] , ret.os[h.np] , pch=4 , lwd=2 )
+
+```
+
+```{r}
+avg.hit <- c( mean(h.hs) , mean(h.n) , mean(h.st) , mean(h.np) ) 
+print( round(avg.hit,3) )
+
+uc.stat <- function(p,h){   
+  uc <- -2 *(  log(p**sum(h) * (1-p)**(length(h)-sum(h)) ) - log(mean(h)**sum(h) * (1-mean(h))**(length(h)-sum(h)) ) )
+  return( uc )
+}
+
+u.hs <- uc.stat(p,h.hs)
+u.n  <- uc.stat(p,h.n)
+u.st <- uc.stat(p,h.st)
+u.np <- uc.stat(p,h.np)
+
+print( round( 1-pchisq(c(u.hs,u.n,u.st,u.np),1) , 3 ) )
+
+dq.stat <- function(p,h){  
+  n    <- length(h)
+  y    <- h[6:n]-p
+  X    <- cbind( h[5:(n-1)] , h[4:(n-2)] , h[3:(n-3)] , h[2:(n-4)] , h[1:(n-5)] )
+  b    <- solve( t(X) %*% X ) %*% t(X) %*% y
+  stat <- (t(b) %*% t(X) %*% X %*% b)/(p*(1-p))
+  pval <- 1-pchisq(stat,5)
+  return(pval)
+}
+
+dq.hs <- dq.stat(p,h.hs)
+dq.n  <- dq.stat(p,h.n)
+dq.st <- dq.stat(p,h.st)
+dq.np <- dq.stat(p,h.np)
+
+print( round( c(dq.hs,dq.n,dq.st,dq.np) , 3 ) ) 
+```

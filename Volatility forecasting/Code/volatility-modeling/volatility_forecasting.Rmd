@@ -1,0 +1,120 @@
+
+ Cleanup and get ready
+```{r}
+rm( list=ls() )
+
+library(fGarch)
+library(tseries)
+library(moments)
+library(sandwich)
+
+source('../lib/utilities.R')
+source('../lib/tarch.R')
+source('../lib/egarch.R')
+
+```
+
+ Load data
+```{r}
+D <- read.table('../data/sp500-returns.csv');
+
+dates <- as.Date(as.character(D[,1]),'%Y-%m-%d')
+ret   <- D[,2]
+```
+
+# Forecast!
+
+The code output in this chunk is hidden, as it computes a high-order number of betas for every step ofthe static forecast. The outcome using the values of all these betas for each step of the (static) forecast can be seen in the plots
+
+```{r include=FALSE}
+T <- tail( which( dates <= as.Date('2014-01-01') ) , 1 )
+N <- length(ret)
+
+var.g = rep( 0 , N-T )
+var.t = rep( 0 , N-T )
+var.r = rep( 0 , N-T )
+
+for( t in T:(N-1) ){
+     
+     cat('.')
+
+     ret.in  <- ret[ 1:t ]
+     ret.out <- ret[ (t+1):N ]
+     
+     # fit
+     garch11     <- garch(ret.in, order = c(1,1))
+     vol.garch   <- garch11$fitted.values[,1]
+     theta.garch <- coef(garch11)
+     var.garch   <- theta.garch['a0'] + theta.garch['a1']*tail(ret.in,1)**2 + theta.garch['b1']*tail(vol.garch,1)**2
+     
+     tarch11     <- Tgarch11(ret.in)
+     vol.tarch   <- tarch11$volatility
+     theta.tarch <- tarch11$par
+     var.tarch   <- theta.tarch['omega'] + theta.tarch['alpha']*tail(ret.in,1)**2 + theta.tarch['gam1']*tail(ret.in,1)**2 * (tail(ret.in,1)<0) + theta.tarch['beta']*tail(vol.tarch,1)**2     
+     
+     var.roll <- var( ret.in[ (length(ret.in)-504):length(ret.in) ] )
+ 
+     # forecast
+     var.g[t-T+1] <- var.garch
+     var.t[t-T+1] <- var.tarch
+     var.r[t-T+1] <- var.roll;    
+}
+ 
+dates.out <- dates[ (T+1):N ]
+ret2      <- ret[(T+1):N]**2
+```
+
+```{r}
+myplot( dates.out , sqrt(252*var.g) , col='red2' )
+lines( dates.out , sqrt(252*var.t) , col='blue2' )
+lines( dates.out , sqrt(252*var.r) , col='green2' )
+legend( 'topright' , c('garch','tarch','roll') , col=c('red2','blue2','green2') , lwd=3)
+
+ql  <- cbind( ret2/var.g - log( ret2/var.g ) -1 , ret2/var.t - log( ret2/var.t ) -1 , ret2/var.r - log( ret2/var.r ) -1 )
+mse <- cbind( (ret2-var.g)**2 ,  (ret2-var.t)**2  , (ret2-var.r)**2 )
+ 
+par( mar=c(10,2,1,1) , xaxs="i" , mfrow=c(3,1) )
+myplot( dates.out , mse[,1] , t='l' , lwd=2 , col='red2' )
+legend('topleft',c('garch'),col=c('red2'),lwd=4)
+myplot( dates.out , mse[,2] , t='l' , lwd=2 , col='blue2' )
+legend('topleft',c('tarch'),col=c('blue2'),lwd=4)
+myplot( dates.out , mse[,3] , t='l' , lwd=2 , col='green2' )
+legend('topleft',c('roll'),col=c('green2'),lwd=4)
+
+par( mar=c(10,2,1,1) , xaxs="i" , mfrow=c(3,1) )
+myplot( dates.out , ql[,1] , t='l' , lwd=2 , col='red2' )
+legend('topleft',c('garch'),col=c('red2'),lwd=4)
+myplot( dates.out , ql[,2] , t='l' , lwd=2 , col='blue2' )
+legend('topleft',c('tarch'),col=c('blue2'),lwd=4)
+myplot( dates.out , ql[,3] , t='l' , lwd=2 , col='green2' )
+legend('topleft',c('roll'),col=c('green2'),lwd=4)
+```
+
+ Diebold Mariano 
+```{r}
+L <- rbind( colMeans( ql ) , colMeans( mse ) )
+
+DM <- matrix( 0 , 2 , 2)
+for( m in 1:2){
+    d = ql[,m] - ql[,3]
+    DM[1,m] = mean( d )/sqrt( lrvar(d) )
+    
+    d = mse[,m] - mse[,3]
+    DM[2,m] = mean( d )/sqrt( lrvar(d) )
+}
+ 
+DM.pval <- 1-pchisq( DM**2 , 1 )
+
+DM <- matrix( 0 , 2 , 2)
+for( m in 1:2){
+  d = ql[,m] - ql[,3]
+  DM[1,m] = mean( d )/sqrt( lrvar(d) )
+  
+  d = mse[,m] - mse[,3]
+  DM[2,m] = mean( d )/sqrt( lrvar(d) )
+}
+
+DM.pval <- 1-pchisq( DM**2 , 1 )
+
+print( rbind( DM,DM.pval) )
+```

@@ -1,0 +1,118 @@
+```{r}
+rm(list=ls())
+
+library(fGarch)
+library(tseries)
+library(moments)
+
+source('../lib/utilities.R')
+source('../lib/tarch.R')
+source('../lib/egarch.R')
+```
+
+```{r}
+D <- read.table('../data/sp500-returns.csv');
+
+dates <- as.Date(as.character(D[,1]),'%Y-%m-%d')
+ret   <- D[,2]
+T     <- length(ret)
+```
+
+ Leverage plot
+```{r}
+
+r.plus  <- ret[1:(T-1)]*(ret[1:(T-1)]>0) 
+r.minus <- ret[1:(T-1)]*(ret[1:(T-1)]<0) 
+levreg  <- lm( abs(ret[2:T]) ~ 0+r.plus + r.minus )
+
+plot( ret[1:(T-1)] , abs(ret[2:T]) , pch=16 , col='darkorange' , yaxs='i' , tck=0.02 , xlab='lagged ret', ylab='absolute ret')
+abline( a=0 , b=coef(levreg)['r.plus']  , col='red2' , lwd=2 )
+abline( a=0 , b=coef(levreg)['r.minus'] , col='red2' , lwd=2 )
+grid()
+
+```
+
+ GARCH
+```{r}
+garch11 <- garch(ret, order = c(1,1))
+
+summary(garch11)
+
+sigma <- garch11$fitted.values[,1]
+
+z     <- ret/sigma
+
+
+z.plus  <- z[1:(T-1)]*(z[1:(T-1)]>0) 
+z.minus <- z[1:(T-1)]*(z[1:(T-1)]<0) 
+levreg  <- lm( abs(z[2:T]) ~ 0+z.plus + z.minus )
+
+plot( z[1:(T-1)] , abs(z[2:T]) , pch=16 , col='darkorange' , yaxs='i' , tck=0.02 , xlab='lagged stdret', ylab='absolute stdret' , xlim=c(-6,6) , ylim=c(0,6))
+abline( a=0 , b=coef(levreg)['z.plus']  , col='red2' , lwd=2 )
+abline( a=0 , b=coef(levreg)['z.minus'] , col='red2' , lwd=2 )
+grid()
+
+```
+ 
+ TESTS
+```{r}
+neg.dummy          <- ret[1:(T-1)]<0
+neg_sign_bias.test <- lm( z[2:T]**2 ~ neg.dummy )
+
+summary( neg_sign_bias.test )
+
+neg.size           <- ret[1:(T-1)]*(ret[1:(T-1)]<0)
+neg_size_bias.test <- lm( z[2:T]**2 ~ neg.size )
+
+summary( neg_size_bias.test )
+```
+
+ TARCH & EGARCH
+```{r}
+garch11  <- garch(ret, order = c(1,1))
+tarch11  <- Tgarch11(ret)
+egarch11 <- Egarch(ret)
+
+# 
+vol.garch  <- garch11$fitted.values[,1]
+vol.tarch  <- tarch11$volatility
+vol.egarch <- egarch11$volatility
+
+myplot( dates , sqrt(252)*vol.garch , col='red2' )
+lines( dates , sqrt(252)*vol.tarch , col='blue2' )
+lines( dates , sqrt(252)*vol.egarch , col='green2' )
+legend( 'topright' , c('garch','tarch','egarch') , col=c('red2','blue2','green2') , lwd=3)
+
+sov.crisis <- dates >= as.Date('2011-05-01') & dates <= as.Date('2011-10-01') 
+myplot( dates[sov.crisis] , cumsum( ret[sov.crisis] ) )
+
+myplot( dates[sov.crisis] , sqrt(252)*vol.garch[sov.crisis] , col='red2' , ylim=c(0,60) )
+lines( dates[sov.crisis] , sqrt(252)*vol.tarch[sov.crisis] , col='blue2' )
+lines( dates[sov.crisis] , sqrt(252)*vol.egarch[sov.crisis] , col='green2' )
+legend( 'topleft' , c('garch','tarch','egarch') , col=c('red2','blue2','green2') , lwd=3)
+```
+
+ Residual diagnostics
+```{r}
+z.tarch <- ret/vol.tarch
+z.egarch <- ret/vol.egarch
+
+neg.dummy                 <- ret[1:(T-1)]<0
+neg_sign_bias.test        <- lm( z[2:T]**2 ~ neg.dummy )
+neg_sign_bias.tarch.test  <- lm( z.tarch[2:T]**2 ~ neg.dummy )
+neg_sign_bias.egarch.test <- lm( z.egarch[2:T]**2 ~ neg.dummy )
+```
+
+ NIC
+```{r}
+x.range <- seq(-5,5,0.01)
+nicg <- (coef(garch11)['a0'] + coef(garch11)['b1'] * var(ret) ) + coef(garch11)['a1'] * x.range**2
+nict <- (tarch11$par['omega'] + tarch11$par['beta'] * var(ret) ) + (tarch11$par['alpha'] + tarch11$par['gam1']*(x.range<0)) * x.range**2
+# THIS IS EMBARASSING!
+nice <- exp( -0.09962587 + 0.9805331 * log(var(ret)) + (0.09962587 * (abs(x.range)/sd(ret) -sqrt(2/pi))  - 0.1282174*x.range/sd(ret))  ) 
+
+plot (x.range,nicg,lwd='2',col='red2',t='l',tck=0.02,ylab='NIC',xlab='',ylim=c(0,4))
+lines(x.range,nict,lwd='2',col='blue2',t='l')
+lines(x.range,nice,lwd='2',col='green2',t='l')
+grid()
+```

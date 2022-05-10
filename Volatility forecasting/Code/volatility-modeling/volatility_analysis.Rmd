@@ -1,0 +1,114 @@
+
+ clean and set up
+```{r}
+rm( list=ls() )
+
+library(fGarch)
+library(tseries)
+library(moments)
+source('../lib/utilities.R')
+source('../lib/tarch.R')
+```
+
+ Load data
+```{r}
+D <- read.table('../data/sp500-returns.csv');
+
+dates <- as.Date(as.character(D[,1]),'%Y-%m-%d')
+ret   <- D[,2]
+```
+
+ Volatility Clustering
+```{r}
+myplot( dates , abs(ret) , col='red2' )
+abline(h=0 , lwd=2)
+
+# ACFs
+# ACF ret
+ret.acf <- acf(ret , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+# ACF |ret|
+ret.acf <- acf(abs(ret) , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+# ACF ret^2
+ret.acf <- acf(ret**2 , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+# ARCHLM test
+y <- ret[4:length(ret)]**2
+n <- length(y)
+X = cbind( ret[3:(length(ret)-1)]**2 , ret[2:(length(ret)-2)]**2 , ret[1:(length(ret)-3)]**2 )
+
+archlm = lm(y ~ X)
+archlm.statistic <- n*summary( archlm )$r.squared
+archlm.p.value <- 1-pchisq(archlm.statistic,3)
+```
+
+ ARCH(3)
+```{r}
+arch3 <- garch(ret, order = c(0,3))
+
+summary(arch3)
+
+# vol
+sigma <- arch3$fitted.values[,1]
+
+myplot( dates , sqrt(252)*sigma , col='red2' )
+```
+
+ Residuals
+```{r}
+z <- ret/sigma
+myplot( dates , z , col='red2' )
+
+qqnorm(ret,col='tomato',main='')
+qqline(ret,lwd=2,lty=3)
+
+qqnorm(z,col='tomato',main='')
+qqline(z,lwd=2,lty=3)
+
+jb.r <- jarque.test(ret)
+jb.z <- jarque.test(z[4:length(ret)])
+
+acf( abs(ret) , lag.max=100 , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+acf( abs(z[4:length(z)]) , lag.max=100 , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+```
+
+ GARCH
+```{r}
+garch11 <- garch(ret, order = c(1,1))
+
+summary(garch11)
+
+sigma <- garch11$fitted.values[,1]
+
+myplot( dates , sqrt(252)*sigma , col='red2' )
+
+myplot( dates , ret , col='orange2' )
+lines( dates , 1.96*sigma , col='blue2')
+lines( dates , -1.96*sigma , col='blue2')
+```
+
+# Residuals
+```{r}
+z <- ret/sigma
+myplot( dates , z , col='red2' )
+
+par( mar=c(2,2,0.1,0.1) )
+qqnorm(ret,col='tomato',main='')
+qqline(ret,lwd=2,lty=3)
+
+par( mar=c(2,2,0.1,0.1) )
+qqnorm(z,col='tomato',main='')
+qqline(z,lwd=2,lty=3)
+
+jb.r <- jarque.test(ret)
+jb.z <- jarque.test(z[2:length(ret)])
+
+par( mar=c(2,2,0.1,0.1) )
+acf( abs(ret) , lag.max=100 , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+par( mar=c(2,2,0.1,0.1) )
+acf( abs(z[4:length(z)]) , lag.max=100 , ylim=c(-0.1,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+```
+
